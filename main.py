@@ -779,7 +779,7 @@ HTML_CODE = r"""
 
 # --- 3. Streamlit Custom Component ဖန်တီးခြင်း ---
 # (အရေးကြီးသည် - Browser တွင် ကုတ်အဟောင်းများငြိနေမှုကို ရှင်းလင်းရန် Directory နာမည်အသစ်ပေးထားပါသည်)
-component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component_v4")
+component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component_v5")
 os.makedirs(component_dir, exist_ok=True)
 html_path = os.path.join(component_dir, "index.html")
 
@@ -806,41 +806,88 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# --- ကိုယ်ပိုင် Custom Subtitle Maker (အသံဖိုင်အရှည်ဖြင့် သင်္ချာနည်းအရ တွက်ချက်မည်) ---
+# --- ကိုယ်ပိုင် Custom Subtitle Maker (စကားလုံး တစ်ဝက်မပြတ်စေမယ့် Smart Split) ---
 class SmartSubMaker:
     def __init__(self, full_text, duration_seconds):
-        self.full_text = full_text.strip()
+        # စာကြောင်းထဲက အင်တာကို Space ဖြင့် အစားထိုးပါမည် (သဘာဝကျကျ ခွဲနိုင်ရန်)
+        self.full_text = full_text.strip().replace('\n', ' ')
         self.duration_seconds = duration_seconds
+        # စာတန်းထိုး တစ်ကြောင်းမှာ ပါဝင်မယ့် အများဆုံး စာလုံးရေ (ဥပမာ ၆၀)
+        self.max_chars_per_line = 60 
+
+    def safe_myanmar_split(self, text):
+        """မြန်မာစာ သရ၊ အသတ် များကို တစ်ဝက်မပြတ်စေဘဲ စာလုံးရေအတိုင်း အန္တရာယ်ကင်းစွာ ဖြတ်ပေးမည့် Algorithm"""
+        chunks = []
+        words = text.split(' ') # Spacebar ချန်ထားပါက ၎င်းအတိုင်း အရင်ဆုံးခွဲပါမည်
+        current_chunk = ""
+        
+        for word in words:
+            if not word:
+                continue
+                
+            # ပေါင်းထည့်လိုက်ပါက သတ်မှတ်ထားသော စာလုံးရေထက် ကျော်သွားလျှင် (Spacebar ချန်ထားသော စကားလုံးများအတွက်)
+            if current_chunk and len(current_chunk) + len(word) + 1 > self.max_chars_per_line:
+                chunks.append(current_chunk.strip())
+                current_chunk = word + " "
+            else:
+                current_chunk += word + " "
+                
+            # Space လုံးဝမပါဘဲ စာလုံးတွေဆက်နေပြီး သတ်မှတ်ထားသော စာလုံးရေထက် အများကြီးကျော်နေပါက
+            while len(current_chunk) > self.max_chars_per_line + 20: 
+                split_idx = self.max_chars_per_line
+                
+                # စာလုံးတစ်ဝက်ပြတ်မသွားစေရန် ရှေ့သို့ဆက်တိုးစစ်ဆေးမည်
+                while split_idx < len(current_chunk):
+                    char = current_chunk[split_idx]
+                    # \u102B-\u103E နှင့် \u105E-\u105F သည် မြန်မာစာ သရ၊ အသတ်၊ ဟထိုး၊ ဝဆွဲ စသည်တို့ဖြစ်သည် (Combining Marks)
+                    if '\u102B' <= char <= '\u103E' or '\u105E' <= char <= '\u105F':
+                        split_idx += 1 # အသတ်၊ သရ ဖြစ်နေလျှင် ဖြတ်ခွင့်မပေးဘဲ ရှေ့တိုးမည်
+                    else:
+                        break # အသတ်၊ သရ မဟုတ်သော အက္ခရာအသစ်ရောက်မှသာ ဖြတ်ပါမည်
+                        
+                chunks.append(current_chunk[:split_idx].strip())
+                current_chunk = current_chunk[split_idx:]
+                
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+            
+        return chunks
 
     def generate_subs(self):
         # တကယ်လို့ စာသားမပါရင် သို့မဟုတ် အသံမရှိရင် Fallback ထုတ်ပေးမည်
         if not self.full_text or self.duration_seconds <= 0:
             return "1\n00:00:00,000 --> 00:00:05,000\n[အသံထွက်နေပါသည်... စာတန်းထိုး မရရှိနိုင်ပါ]\n\n"
 
-        # စာကြောင်းများကို '။' ဖြင့် ခွဲထုတ်မည်။
-        sentences = [s.strip() + "။" for s in self.full_text.split("။") if s.strip()]
-        if not sentences:
-            sentences = [self.full_text]
+        # ပုဒ်မ ဖြင့် အရင်ခွဲမည်
+        raw_sentences = [s.strip() + "။" for s in self.full_text.split("။") if s.strip()]
+        if not raw_sentences:
+            raw_sentences = [self.full_text]
 
-        # စာလုံးရေ (Character count) ကို အခြေခံ၍ အချိန်ဘယ်လောက်ကြာမလဲ တွက်ချက်မည်
-        total_chars = sum(len(s) for s in sentences)
+        # စာကြောင်းရှည်များကို စာလုံးရေကန့်သတ်ချက်ဖြင့် ထပ်ခွဲမည် (Syllable မပြတ်စေဘဲ)
+        final_chunks = []
+        for rs in raw_sentences:
+            split_parts = self.safe_myanmar_split(rs)
+            final_chunks.extend(split_parts)
+
+        # အချိန်ဘယ်လောက်ကြာမလဲ တွက်ချက်ရန် စာလုံးရေ စုစုပေါင်းရှာမည်
+        total_chars = sum(len(c) for c in final_chunks)
         if total_chars == 0:
             total_chars = 1 # 0 ဖြင့် စားခြင်းကို ကာကွယ်ရန်
 
         srt_text = ""
         current_time = 0.0
 
-        for i, sentence in enumerate(sentences, 1):
-            char_ratio = len(sentence) / total_chars
+        for i, chunk in enumerate(final_chunks, 1):
+            char_ratio = len(chunk) / total_chars
             # စာကြောင်းတစ်ကြောင်းအတွက် ကြာချိန် (စက္ကန့်)
-            sentence_duration = self.duration_seconds * char_ratio
+            chunk_duration = self.duration_seconds * char_ratio
             
             start_time = current_time
-            end_time = current_time + sentence_duration
+            end_time = current_time + chunk_duration
             
             srt_text += f"{i}\n"
             srt_text += f"{self._format_time(start_time)} --> {self._format_time(end_time)}\n"
-            srt_text += f"{sentence}\n\n"
+            srt_text += f"{chunk}\n\n"
             
             current_time = end_time
 
