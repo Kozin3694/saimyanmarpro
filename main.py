@@ -8,7 +8,6 @@ import json
 import threading
 import edge_tts
 import asyncio
-from edge_tts import SubMaker
 
 # --- 0. Global Concurrency Limit (ပြိုင်တူအသုံးပြုသူ Max 10 ကန့်သတ်ရန်) ---
 @st.cache_resource
@@ -784,6 +783,37 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
+# --- ကိုယ်ပိုင် Custom Subtitle Maker (Library Error ကို ရှောင်ရှားရန်) ---
+class CustomSubMaker:
+    def __init__(self):
+        self.subs = []
+
+    def create_sub(self, offset, duration, text):
+        # offset နှင့် duration သည် 100-nanosecond ယူနစ် (Ticks) ဖြစ်သည်
+        start_time = offset
+        end_time = offset + duration
+        self.subs.append((start_time, end_time, text))
+
+    def generate_subs(self):
+        srt_text = ""
+        for i, (start, end, text) in enumerate(self.subs, 1):
+            srt_text += f"{i}\n"
+            srt_text += f"{self._format_time(start)} --> {self._format_time(end)}\n"
+            srt_text += f"{text}\n\n"
+        return srt_text
+
+    def _format_time(self, ticks):
+        # 1 tick = 100 nanoseconds = 0.0001 milliseconds
+        ms = ticks // 10000
+        seconds = ms // 1000
+        
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        millis = ms % 1000
+        
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
 # --- Streamlit နဲ့ Async ငြိခြင်းကို ကာကွယ်ရန် သီးသန့် Thread ခွဲ၍ Run မည့်စနစ် (အလွန်မြန်ဆန်သည်) ---
 def run_tts_in_thread(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
@@ -801,7 +831,7 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
             asyncio.set_event_loop(loop)
             
             communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-            sub_maker = SubMaker() # SRT တွက်ချက်ပေးမည့် Class
+            sub_maker = CustomSubMaker() # edge-tts ရဲ့ SubMaker ကိုမသုံးတော့ဘဲ ကိုယ်ပိုင် Custom Class ကိုသုံးမည်
             
             # Streaming စနစ်ဖြင့် အသံရော စာတန်းထိုးပါ အချိန်ကိုက် ဖမ်းယူခြင်း
             async def process_stream():
@@ -811,7 +841,7 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
                         audio_data += chunk["data"]
                     elif chunk["type"] == "WordBoundary":
                         # အသံထွက်သည့် အချိန်နှင့် စာလုံးများကို SRT အတွက် မှတ်သားခြင်း
-                        sub_maker.create_sub((chunk["offset"], chunk["duration"]), chunk["text"])
+                        sub_maker.create_sub(chunk["offset"], chunk["duration"], chunk["text"])
                 return audio_data
 
             audio_data = loop.run_until_complete(process_stream())
