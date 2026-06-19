@@ -8,6 +8,7 @@ import json
 import threading
 import edge_tts
 import asyncio
+import mutagen.mp3
 
 # --- 0. Global Concurrency Limit (ပြိုင်တူအသုံးပြုသူ Max 10 ကန့်သတ်ရန်) ---
 @st.cache_resource
@@ -778,7 +779,7 @@ HTML_CODE = r"""
 
 # --- 3. Streamlit Custom Component ဖန်တီးခြင်း ---
 # (အရေးကြီးသည် - Browser တွင် ကုတ်အဟောင်းများငြိနေမှုကို ရှင်းလင်းရန် Directory နာမည်အသစ်ပေးထားပါသည်)
-component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component_v3")
+component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component_v4")
 os.makedirs(component_dir, exist_ok=True)
 html_path = os.path.join(component_dir, "index.html")
 
@@ -805,42 +806,54 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# --- ကိုယ်ပိုင် Custom Subtitle Maker (Library Error ကို ရှောင်ရှားရန်) ---
-class CustomSubMaker:
-    def __init__(self):
-        self.subs = []
-
-    def create_sub(self, offset, duration, text):
-        # offset နှင့် duration သည် 100-nanosecond ယူနစ် (Ticks) ဖြစ်သည်
-        start_time = offset
-        end_time = offset + duration
-        self.subs.append((start_time, end_time, text))
+# --- ကိုယ်ပိုင် Custom Subtitle Maker (အသံဖိုင်အရှည်ဖြင့် သင်္ချာနည်းအရ တွက်ချက်မည်) ---
+class SmartSubMaker:
+    def __init__(self, full_text, duration_seconds):
+        self.full_text = full_text.strip()
+        self.duration_seconds = duration_seconds
 
     def generate_subs(self):
-        # တကယ်လို့ edge-tts က စာတန်းထိုး အချိန်မထုတ်ပေးခဲ့ရင်တောင် (Fallback) စာတန်းထိုးတစ်ခု အလိုအလျောက် ထုတ်ပေးမည်။
-        if not self.subs:
-            return "1\n00:00:00,000 --> 00:00:10,000\n[အသံထွက်နေပါသည်... စာတန်းထိုး အတိအကျမရရှိနိုင်ပါ]\n\n"
-            
+        # တကယ်လို့ စာသားမပါရင် သို့မဟုတ် အသံမရှိရင် Fallback ထုတ်ပေးမည်
+        if not self.full_text or self.duration_seconds <= 0:
+            return "1\n00:00:00,000 --> 00:00:05,000\n[အသံထွက်နေပါသည်... စာတန်းထိုး မရရှိနိုင်ပါ]\n\n"
+
+        # စာကြောင်းများကို '။' ဖြင့် ခွဲထုတ်မည်။
+        sentences = [s.strip() + "။" for s in self.full_text.split("။") if s.strip()]
+        if not sentences:
+            sentences = [self.full_text]
+
+        # စာလုံးရေ (Character count) ကို အခြေခံ၍ အချိန်ဘယ်လောက်ကြာမလဲ တွက်ချက်မည်
+        total_chars = sum(len(s) for s in sentences)
+        if total_chars == 0:
+            total_chars = 1 # 0 ဖြင့် စားခြင်းကို ကာကွယ်ရန်
+
         srt_text = ""
-        for i, (start, end, text) in enumerate(self.subs, 1):
+        current_time = 0.0
+
+        for i, sentence in enumerate(sentences, 1):
+            char_ratio = len(sentence) / total_chars
+            # စာကြောင်းတစ်ကြောင်းအတွက် ကြာချိန် (စက္ကန့်)
+            sentence_duration = self.duration_seconds * char_ratio
+            
+            start_time = current_time
+            end_time = current_time + sentence_duration
+            
             srt_text += f"{i}\n"
-            srt_text += f"{self._format_time(start)} --> {self._format_time(end)}\n"
-            srt_text += f"{text}\n\n"
+            srt_text += f"{self._format_time(start_time)} --> {self._format_time(end_time)}\n"
+            srt_text += f"{sentence}\n\n"
+            
+            current_time = end_time
+
         return srt_text
 
-    def _format_time(self, ticks):
-        # 1 tick = 100 nanoseconds = 0.0001 milliseconds
-        ms = ticks // 10000
-        seconds = ms // 1000
-        
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        millis = ms % 1000
-        
+    def _format_time(self, seconds_float):
+        hours = int(seconds_float // 3600)
+        minutes = int((seconds_float % 3600) // 60)
+        secs = int(seconds_float % 60)
+        millis = int(round((seconds_float - int(seconds_float)) * 1000))
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-# --- Streamlit နဲ့ Async ငြိခြင်းကို ကာကွယ်ရန် သီးသန့် Thread ခွဲ၍ Run မည့်စနစ် (အလွန်မြန်ဆန်သည်) ---
+# --- Streamlit နဲ့ Async ငြိခြင်းကို ကာကွယ်ရန် သီးသန့် Thread ခွဲ၍ Run မည့်စနစ် ---
 def run_tts_in_thread(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
@@ -852,34 +865,23 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
     
     def _async_task():
         try:
-            # Streamlit ရဲ့ Main Event Loop နဲ့ မရောအောင် Loop အသစ်ဖန်တီးခြင်း
+            # 1. Streamlit ရဲ့ Main Event Loop နဲ့ မရောအောင် Loop အသစ်ဖန်တီးခြင်း
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # 2. အသံဖိုင်ကို တိုက်ရိုက်ထုတ်ယူခြင်း (Streaming မလုပ်တော့ပါ - ဤနည်းက အမြန်ဆုံးနှင့် အငြိမ်ဆုံးဖြစ်သည်)
             communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-            sub_maker = CustomSubMaker() # edge-tts ရဲ့ SubMaker ကိုမသုံးတော့ဘဲ ကိုယ်ပိုင် Custom Class ကိုသုံးမည်
-            
-            # Streaming စနစ်ဖြင့် အသံရော စာတန်းထိုးပါ အချိန်ကိုက် ဖမ်းယူခြင်း
-            async def process_stream():
-                audio_data = b""
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        audio_data += chunk["data"]
-                    elif chunk["type"] == "WordBoundary":
-                        # အသံထွက်သည့် အချိန်နှင့် စာလုံးများကို SRT အတွက် မှတ်သားခြင်း
-                        sub_maker.create_sub(chunk["offset"], chunk["duration"], chunk["text"])
-                return audio_data
+            loop.run_until_complete(communicate.save(output_file))
+            loop.close()
 
-            audio_data = loop.run_until_complete(process_stream())
-            
-            # Audio ဖိုင် သိမ်းခြင်း
-            with open(output_file, "wb") as f:
-                f.write(audio_data)
-            
-            # SRT စာသားထုတ်ယူခြင်း (အလွတ်မဖြစ်စေရန် Fallback ထည့်သွင်းထားပြီးဖြစ်သည်)
+            # 3. ထွက်လာသော အသံဖိုင်၏ အရှည် (Duration) ကို တိုင်းတာခြင်း
+            audio = mutagen.mp3.MP3(output_file)
+            duration_in_seconds = audio.info.length
+
+            # 4. SmartSubMaker ဖြင့် အသံအရှည်ပေါ်မူတည်ပြီး စာတန်းထိုး အချိန်ကိုက် ဖန်တီးခြင်း
+            sub_maker = SmartSubMaker(text, duration_in_seconds)
             srt_text = sub_maker.generate_subs()
             
-            loop.close()
             result.append((output_file, srt_text)) # Audio File နှင့် SRT စာသား နှစ်ခုလုံးကို Return ပြန်မည်
         except Exception as e:
             result.append(e)
@@ -894,23 +896,26 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
         
     return result[0]
 
+# --- Streamlit Session States ---
 if "audio_b64" not in st.session_state:
     st.session_state.audio_b64 = None
-if "srt_b64" not in st.session_state: # အသစ်ထပ်ထည့်ထားသော SRT State
+if "srt_b64" not in st.session_state:
     st.session_state.srt_b64 = None
 if "error" not in st.session_state:
     st.session_state.error = None
 if "last_timestamp" not in st.session_state:
     st.session_state.last_timestamp = None
 
+# --- UI Component ကို ခေါ်ယူခြင်း ---
 ui_state = tts_ui(
     audio_b64=st.session_state.audio_b64, 
-    srt_b64=st.session_state.srt_b64, # UI သို့ SRT ပို့ပေးခြင်း
+    srt_b64=st.session_state.srt_b64, 
     error=st.session_state.error,
     run_id=st.session_state.last_timestamp, 
     key="tts_ui_main"
 )
 
+# --- UI မှ အချက်အလက်များ ရောက်လာသောအခါ ---
 if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     st.session_state.last_timestamp = ui_state["timestamp"]
     st.session_state.error = None 
@@ -951,7 +956,12 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         update_stats()
         
     except Exception as e:
-        st.session_state.error = str(e)
+        # တကယ်လို့ mutagen မရှိရင် တပ်မယ့် error မျိုးကို ဖမ်းပေးမည်
+        if "mutagen" in str(e).lower() or "No module named 'mutagen'" in str(e):
+            st.session_state.error = "🚨 Server တွင် 'mutagen' library ထည့်သွင်းရန် လိုအပ်ပါသည်။ requirements.txt တွင် mutagen ဟု ထည့်ပါ။"
+        else:
+            st.session_state.error = str(e)
+            
         st.session_state.audio_b64 = None
         st.session_state.srt_b64 = None
     finally:
