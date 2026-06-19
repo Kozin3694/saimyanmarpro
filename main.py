@@ -58,7 +58,7 @@ with st.sidebar:
     st.write("အသုံးပြုသူ အရေအတွက်ကို ကြည့်ရန် Password ထည့်ပါ။")
     
     # ဤနေရာတွင် Password ကို ပြောင်းနိုင်ပါသည်
-    ADMIN_PASSWORD = "saimyanmar123##" 
+    ADMIN_PASSWORD = "saimyanmar123#" 
     
     pwd = st.text_input("Password", type="password")
     
@@ -693,6 +693,9 @@ if write_html:
 tts_ui = components.declare_component("tts_ui", path=component_dir)
 
 # --- 4. Python Backend အလုပ်လုပ်မည့် အပိုင်း ---
+import edge_tts
+import asyncio
+
 VOICE_MAP = {
     "v1": "my-MM-ThihaNeural", "v2": "my-MM-NilarNeural", "v3": "it-IT-GiuseppeMultilingualNeural",
     "v4": "en-AU-WilliamMultilingualNeural", "v5": "en-US-AndrewMultilingualNeural",
@@ -703,23 +706,15 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-def generate_tts_cli(text, voice_id, speed, pitch):
+# --- အမြန်ဆုံး အလုပ်လုပ်မည့် Async စနစ်သို့ ပြောင်းလဲထားပါသည် ---
+async def generate_tts_fast(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
     real_voice = VOICE_MAP.get(voice_id, "my-MM-ThihaNeural")
 
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
-    
-    cmd = [
-        sys.executable, "-m", "edge_tts",
-        "--voice", real_voice,
-        "--text", text,
-        "--rate", rate,
-        "--pitch", pitch_str,
-        "--write-media", output_file
-    ]
-    
-    subprocess.run(cmd, check=True, capture_output=True)
+    communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
+    await communicate.save(output_file)
     return output_file
 
 if "audio_b64" not in st.session_state:
@@ -746,7 +741,14 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        output_file = generate_tts_cli(text, voice, speed, pitch)
+        # Async Loop ဖြင့် တိုက်ရိုက် အမြန်ခေါ်ယူခြင်း
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        output_file = loop.run_until_complete(generate_tts_fast(text, voice, speed, pitch))
         
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -757,9 +759,6 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         # --- အသံအောင်မြင်စွာ ထုတ်ပြီးပါက မှတ်တမ်းတင်မည် ---
         update_stats()
         
-    except subprocess.CalledProcessError as e:
-        st.session_state.error = f"TTS Error: {e.stderr.decode('utf-8', errors='ignore')}"
-        st.session_state.audio_b64 = None
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
