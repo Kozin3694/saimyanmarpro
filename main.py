@@ -1,10 +1,9 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import edge_tts
-import asyncio
 import os
 import base64
 import uuid
+import subprocess
 
 # --- 1. Streamlit Page Configuration ---
 st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="collapsed")
@@ -539,11 +538,11 @@ HTML_CODE = r"""
             setDownloadName();
             resetButton();
             
-            // --- Force Scroll to Audio Player ---
+            // --- Force Scroll to Audio Player (Delay ချိန်ကို ပိုကြာကြာထားပေးလိုက်ပါပြီ) ---
             setTimeout(() => {
                 Streamlit.setFrameHeight();
                 document.getElementById('audio-scroll-target').scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 300); // Give it a slight delay to ensure UI is ready
+            }, 800); 
         }
 
         function resetButton() {
@@ -634,14 +633,25 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-async def generate_tts(text, voice_id, speed, pitch):
+# asyncio အစား CLI System Command ဖြင့် လုံးဝ Crash မဖြစ်အောင် ပြောင်းရေးထားပါသည်
+def generate_tts_cli(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
     real_voice = VOICE_MAP.get(voice_id, "my-MM-ThihaNeural")
 
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
-    communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-    await communicate.save(output_file)
+    
+    cmd = [
+        "edge-tts",
+        "--voice", real_voice,
+        "--text", text,
+        "--rate", rate,
+        "--pitch", pitch_str,
+        "--write-media", output_file
+    ]
+    
+    # Run the command and wait for it to finish
+    subprocess.run(cmd, check=True, capture_output=True)
     return output_file
 
 if "audio_b64" not in st.session_state:
@@ -664,25 +674,20 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        output_file = loop.run_until_complete(generate_tts(text, voice, speed, pitch))
+        # CLI command ဖြင့် အသံထုတ်ပေးမည် (စကားလုံး ၁ သောင်းကျော်လည်း မြန်ဆန်စွာ အလုပ်လုပ်ပါမည်)
+        output_file = generate_tts_cli(text, voice, speed, pitch)
         
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
         
         os.remove(output_file) 
-        
         st.session_state.audio_b64 = b64
         
+    except subprocess.CalledProcessError as e:
+        st.session_state.error = f"TTS Error: {e.stderr.decode('utf-8', errors='ignore')}"
+        st.session_state.audio_b64 = None
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
         
-    # Python အပိုင်းပြီးသွားရင် UI ဘက်ကို အသံဖိုင် Base64 ပို့ဖို့ Rerun ခေါ်လိုက်တာပါ
-    # Browser က Component ကို အသစ်ပြန်ဆွဲပေမယ့် အခု LocalStorage ပါတဲ့အတွက် စာသားတွေ ပြန်ပေါ်လာမှာပါ
     st.rerun()
