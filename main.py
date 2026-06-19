@@ -3,8 +3,8 @@ import streamlit.components.v1 as components
 import os
 import base64
 import uuid
-import subprocess
-import sys
+import asyncio
+import edge_tts
 
 # --- 1. Streamlit Page Configuration ---
 st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="collapsed")
@@ -290,6 +290,25 @@ HTML_CODE = r"""
     </div>
 
     <script>
+        // Custom Toast Notification (Replaces window.alert)
+        function showToast(message, isError=false) {
+            const toast = document.createElement('div');
+            toast.innerText = message;
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.backgroundColor = isError ? '#ef4444' : '#ec4899'; // red or pink
+            toast.style.color = '#fff';
+            toast.style.padding = '12px 24px';
+            toast.style.borderRadius = '10px';
+            toast.style.zIndex = '9999';
+            toast.style.fontWeight = 'bold';
+            toast.style.boxShadow = '0 4px 15px rgba(0,0,0,0.2)';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
         // --- 3. STREAMLIT & JS COMMUNICATION ---
         function sendMessageToStreamlitClient(type, data) {
             var outData = Object.assign({ isStreamlitMessage: true, type: type }, data);
@@ -314,7 +333,7 @@ HTML_CODE = r"""
                     window.last_run_id = args.run_id; // အသစ်ရောက်လာရင် မှတ်ထားမည်
 
                     if (args.error) {
-                        alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
+                        showToast("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error, true);
                         resetButton();
                     } else if (args.audio_b64) {
                         playAudioBase64(args.audio_b64);
@@ -509,7 +528,9 @@ HTML_CODE = r"""
                 inputArea.value = (inputArea.value + text).substring(0, 10000); 
                 updateCharCount();
                 saveState();
-            } catch (err) { alert("စာသား ကူးထည့်၍ မရပါ။ စာရိုက်မည့်အကွက်ကို ဖိ၍ Paste လုပ်ပါ။"); }
+            } catch (err) { 
+                showToast("စာသား ကူးထည့်၍ မရပါ။ စာရိုက်မည့်အကွက်ကို ဖိ၍ Paste လုပ်ပါ။", true); 
+            }
         }
 
         function clearText() {
@@ -560,7 +581,10 @@ HTML_CODE = r"""
             const pitch = document.getElementById('pitch').value;
             const btn = document.getElementById('generate-btn');
 
-            if(!originalText.trim()) { alert("ကျေးဇူးပြု၍ စာသားထည့်သွင်းပါ။"); return; }
+            if(!originalText.trim()) { 
+                showToast("ကျေးဇူးပြု၍ စာသားထည့်သွင်းပါ။", true); 
+                return; 
+            }
             
             saveState(); // Ensure state is saved before triggering reload
 
@@ -635,25 +659,27 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# --- Command ကို ပိုသေချာအောင် sys.executable သုံးပြီးပြောင်းရေးထားပါသည် ---
-def generate_tts_cli(text, voice_id, speed, pitch):
+# --- System Boot Time မလိုတော့ဘဲ Native အမြန်ဆုံး အလုပ်လုပ်မည့် Python Function ---
+def generate_tts_fast(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
     real_voice = VOICE_MAP.get(voice_id, "my-MM-ThihaNeural")
 
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
     
-    cmd = [
-        sys.executable, "-m", "edge_tts",
-        "--voice", real_voice,
-        "--text", text,
-        "--rate", rate,
-        "--pitch", pitch_str,
-        "--write-media", output_file
-    ]
-    
-    # Run the command and wait for it to finish
-    subprocess.run(cmd, check=True, capture_output=True)
+    # Internal Async Function
+    async def _gen():
+        communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
+        await communicate.save(output_file)
+        
+    try:
+        # Streamlit တွင် Asyncio ကို အမြန်ဆုံး အလုပ်လုပ်စေရန်
+        asyncio.run(_gen())
+    except RuntimeError:
+        # အကယ်၍ Event loop တစ်ခု အလုပ်လုပ်နေပြီးသားဖြစ်နေပါက (Fallback)
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(_gen())
+        
     return output_file
 
 if "audio_b64" not in st.session_state:
@@ -667,7 +693,7 @@ if "last_timestamp" not in st.session_state:
 ui_state = tts_ui(
     audio_b64=st.session_state.audio_b64, 
     error=st.session_state.error,
-    run_id=st.session_state.last_timestamp, # JS ဘက်ကို ID လှမ်းပို့ပေးမည်
+    run_id=st.session_state.last_timestamp, # JS ဘက်ကို ID လှမ်းပို့ပေးမည် (အဝိုင်းလည်တာရပ်စေရန်)
     key="tts_ui_main"
 )
 
@@ -681,8 +707,8 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        # CLI command ဖြင့် အသံထုတ်ပေးမည်
-        output_file = generate_tts_cli(text, voice, speed, pitch)
+        # Native Python စနစ်ဖြင့် အသံအမြန်ထုတ်ပေးမည်
+        output_file = generate_tts_fast(text, voice, speed, pitch)
         
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -690,9 +716,6 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         os.remove(output_file) 
         st.session_state.audio_b64 = b64
         
-    except subprocess.CalledProcessError as e:
-        st.session_state.error = f"TTS Error: {e.stderr.decode('utf-8', errors='ignore')}"
-        st.session_state.audio_b64 = None
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
