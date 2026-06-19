@@ -4,6 +4,7 @@ import os
 import base64
 import uuid
 import subprocess
+import sys
 
 # --- 1. Streamlit Page Configuration ---
 st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="collapsed")
@@ -254,7 +255,6 @@ HTML_CODE = r"""
         </button>
 
         <div id="audio-container" class="mt-8 hidden">
-            <div id="audio-scroll-target"></div>
             <div class="bg-slate-50 dark:bg-slate-900/80 border-2 border-slate-200 dark:border-slate-700 rounded-3xl p-5 sm:p-6 relative overflow-hidden shadow-inner">
                 
                 <p class="text-center text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2 tracking-widest uppercase">အသံဖွင့်စက်</p>
@@ -302,20 +302,23 @@ HTML_CODE = r"""
             setComponentValue: function(value) { sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value}); }
         };
 
+        window.last_run_id = null; // သေချာစေရန် ID မှတ်ထားမည့် နေရာ
+
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
                 Streamlit.setFrameHeight();
                 const args = event.data.args;
                 
-                if (args.audio_b64 && args.audio_b64 !== window.last_audio_b64) {
-                    window.last_audio_b64 = args.audio_b64;
-                    playAudioBase64(args.audio_b64);
-                }
-                
-                if (args.error && args.error !== window.last_error) {
-                    window.last_error = args.error;
-                    alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
-                    resetButton();
+                // --- Spinner မလည်စေရန် ID အသစ်စစ်ဆေးသည့်အပိုင်း ---
+                if (args.run_id && args.run_id !== window.last_run_id) {
+                    window.last_run_id = args.run_id; // အသစ်ရောက်လာရင် မှတ်ထားမည်
+
+                    if (args.error) {
+                        alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
+                        resetButton();
+                    } else if (args.audio_b64) {
+                        playAudioBase64(args.audio_b64);
+                    }
                 }
             }
         });
@@ -538,11 +541,10 @@ HTML_CODE = r"""
             setDownloadName();
             resetButton();
             
-            // --- Force Scroll to Audio Player (Delay ချိန်ကို ပိုကြာကြာထားပေးလိုက်ပါပြီ) ---
+            // --- အပေါ် Auto ပြန်တက်သွားခြင်းမရှိစေရန် Scroll လုပ်မည့်အပိုင်းကို ဖြုတ်လိုက်ပါပြီ ---
             setTimeout(() => {
-                Streamlit.setFrameHeight();
-                document.getElementById('audio-scroll-target').scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 800); 
+                Streamlit.setFrameHeight(); // Height ညှိရုံသာ ညှိပါမည်။
+            }, 100); 
         }
 
         function resetButton() {
@@ -586,7 +588,7 @@ HTML_CODE = r"""
                 voice: selectedVoiceId,
                 speed: speed,
                 pitch: pitch,
-                timestamp: Date.now()
+                timestamp: Date.now() // ဒီ timestamp လေးက Button နှိပ်တိုင်းပြောင်းသွားမည်
             });
         }
 
@@ -633,7 +635,7 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# asyncio အစား CLI System Command ဖြင့် လုံးဝ Crash မဖြစ်အောင် ပြောင်းရေးထားပါသည်
+# --- Command ကို ပိုသေချာအောင် sys.executable သုံးပြီးပြောင်းရေးထားပါသည် ---
 def generate_tts_cli(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
@@ -642,7 +644,7 @@ def generate_tts_cli(text, voice_id, speed, pitch):
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
     
     cmd = [
-        "edge-tts",
+        sys.executable, "-m", "edge_tts",
         "--voice", real_voice,
         "--text", text,
         "--rate", rate,
@@ -661,8 +663,13 @@ if "error" not in st.session_state:
 if "last_timestamp" not in st.session_state:
     st.session_state.last_timestamp = None
 
-# UI ကို Render လုပ်ခြင်း
-ui_state = tts_ui(audio_b64=st.session_state.audio_b64, error=st.session_state.error)
+# --- UI ကို အပေါ်ပြန်မတက်စေရန် key="tts_ui_main" ဖြင့် သော့ခတ်ထားပါသည် ---
+ui_state = tts_ui(
+    audio_b64=st.session_state.audio_b64, 
+    error=st.session_state.error,
+    run_id=st.session_state.last_timestamp, # JS ဘက်ကို ID လှမ်းပို့ပေးမည်
+    key="tts_ui_main"
+)
 
 if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     st.session_state.last_timestamp = ui_state["timestamp"]
@@ -674,7 +681,7 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        # CLI command ဖြင့် အသံထုတ်ပေးမည် (စကားလုံး ၁ သောင်းကျော်လည်း မြန်ဆန်စွာ အလုပ်လုပ်ပါမည်)
+        # CLI command ဖြင့် အသံထုတ်ပေးမည်
         output_file = generate_tts_cli(text, voice, speed, pitch)
         
         with open(output_file, "rb") as f:
