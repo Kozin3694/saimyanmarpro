@@ -3,11 +3,12 @@ import streamlit.components.v1 as components
 import os
 import base64
 import uuid
-import asyncio
-import edge_tts
+import subprocess
+import sys
+import json
 
 # --- 1. Streamlit Page Configuration ---
-st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="auto")
 
 # --- Streamlit ရဲ့ မူလ Header, Footer များကို ဖျောက်ရန် ---
 st.markdown("""
@@ -20,8 +21,62 @@ st.markdown("""
         padding: 0rem !important;
         max-width: 100% !important;
     }
+    /* Sidebar Styling for Admin */
+    [data-testid="stSidebar"] {
+        background-color: #0f172a;
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+# --- 1.5 ADMIN DASHBOARD & TRACKING SYSTEM ---
+STATS_FILE = "website_stats.json"
+
+# Database ဖိုင်မရှိသေးရင် အသစ်ဖန်တီးမည်
+def init_stats():
+    if not os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"total_generated": 0}, f)
+
+# အသံထုတ်တိုင်း အရေအတွက် တိုးမှတ်မည်
+def update_stats():
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            stats = json.load(f)
+        stats["total_generated"] += 1
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f)
+    except:
+        pass
+
+init_stats()
+
+# ဘေးဘက် (Sidebar) တွင် Admin Password အကွက် ဖန်တီးခြင်း
+with st.sidebar:
+    st.markdown("### 🔐 Admin လျှို့ဝှက်ခန်း")
+    st.write("အသုံးပြုသူ အရေအတွက်ကို ကြည့်ရန် Password ထည့်ပါ။")
+    
+    # ဤနေရာတွင် Password ကို ပြောင်းနိုင်ပါသည်
+    ADMIN_PASSWORD = "saimyanmar123##" 
+    
+    pwd = st.text_input("Password", type="password")
+    
+    if pwd == ADMIN_PASSWORD:
+        st.success("✅ အကောင့်ဝင်ခြင်း အောင်မြင်ပါသည်။")
+        st.markdown("---")
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                stats = json.load(f)
+            total_uses = stats.get("total_generated", 0)
+            
+            st.metric(label="🎧 စုစုပေါင်း အသံထုတ်ယူမှု အကြိမ်ရေ", value=f"{total_uses} ကြိမ်")
+            st.info("မှတ်ချက် - ဤစာရင်းကို Admin သာလျှင် မြင်တွေ့ရမည်ဖြစ်ပါသည်။")
+        except:
+            st.write("ဒေတာ မရှိသေးပါ။")
+    elif pwd != "":
+        st.error("❌ Password မှားယွင်းနေပါသည်။")
+
 
 # --- 2. HTML / CSS / JS UI Code ---
 HTML_CODE = r"""
@@ -97,9 +152,7 @@ HTML_CODE = r"""
 
         .slider-container { position: relative; width: 100%; height: 12px; border-radius: 10px; background: #e2e8f0; overflow: hidden; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
         .dark .slider-container { background: #1e293b; box-shadow: inset 0 1px 2px rgba(0,0,0,0.3); }
-
         .slider-fill { position: absolute; top: 0; left: 0; height: 100%; background: linear-gradient(to right, #3b82f6, #8b5cf6, #ec4899); border-radius: 10px; pointer-events: none; }
-
         .slider-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; -webkit-appearance: none; appearance: none; background: transparent; outline: none; margin: 0; z-index: 2; cursor: pointer; }
         .slider-input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #ffffff; border: 3px solid #ec4899; box-shadow: 0 2px 6px rgba(0,0,0,0.2); cursor: grab; transition: transform 0.1s ease; margin-top: -6px; position: relative; z-index: 3; }
         .slider-input::-webkit-slider-thumb:active { transform: scale(1.1); cursor: grabbing; }
@@ -145,6 +198,39 @@ HTML_CODE = r"""
 
         .no-bounce-input { transition: border-color 0.2s, box-shadow 0.2s; }
         .no-bounce-input:focus-within { border-color: #ec4899; box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.2); }
+
+        /* New Pro Stats Box Styling */
+        .stats-box {
+            background-color: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+        .stat-item {
+            text-align: center;
+            flex: 1;
+        }
+        .stat-val {
+            color: #22c55e;
+            font-size: 22px;
+            font-weight: 800;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            line-height: 1;
+            margin-bottom: 4px;
+            text-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+        }
+        .stat-label {
+            color: #64748b;
+            font-size: 11px;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
     </style>
 </head>
 <body class="text-slate-800 dark:text-white min-h-screen p-3 sm:p-4 flex flex-col items-center">
@@ -244,10 +330,26 @@ HTML_CODE = r"""
             </div>
         </div>
         
-        <textarea id="text-input" rows="5" maxlength="10000" oninput="saveState(); updateCharCount()" class="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white border-2 border-slate-300 dark:border-slate-600 rounded-2xl p-4 focus:outline-none focus:border-pink-500 dark:focus:border-pink-500 focus:ring-2 focus:ring-pink-500/30 text-base leading-relaxed custom-scrollbar shadow-inner transition-all hover:shadow-[0_0_15px_rgba(236,72,153,0.2)]" placeholder="ဤနေရာတွင် မြန်မာစာများ ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..."></textarea>
+        <textarea id="text-input" rows="5" oninput="updateCharCount()" class="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white border-2 border-slate-300 dark:border-slate-600 rounded-2xl p-4 focus:outline-none focus:border-pink-500 dark:focus:border-pink-500 focus:ring-2 focus:ring-pink-500/30 text-base leading-relaxed custom-scrollbar shadow-inner transition-all hover:shadow-[0_0_15px_rgba(236,72,153,0.2)] mb-2" placeholder="ဤနေရာတွင် မြန်မာစာများ ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..."></textarea>
         
-        <div class="text-right text-xs font-bold text-slate-500 mt-2 mb-6">
-            <span id="char-count">၀</span> / ၁၀၀၀၀
+        <!-- NEW PRO STATS BOX (Word/Char/Line Counter) -->
+        <div class="stats-box">
+            <div class="stat-item">
+                <div class="stat-val">∞</div>
+                <div class="stat-label">WORD LIMIT</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" id="word-count">0</div>
+                <div class="stat-label">WORDS</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" id="char-count">0</div>
+                <div class="stat-label">CHARACTERS</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val" id="line-count">0</div>
+                <div class="stat-label">LINES</div>
+            </div>
         </div>
 
         <button id="generate-btn" onclick="generateAudio()" class="bouncy-btn w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl shadow-[0_8px_20px_rgba(236,72,153,0.5)] flex justify-center items-center text-xl tracking-widest border-2 border-pink-400/30">
@@ -290,25 +392,6 @@ HTML_CODE = r"""
     </div>
 
     <script>
-        // Custom Toast Notification (Replaces window.alert)
-        function showToast(message, isError=false) {
-            const toast = document.createElement('div');
-            toast.innerText = message;
-            toast.style.position = 'fixed';
-            toast.style.bottom = '20px';
-            toast.style.left = '50%';
-            toast.style.transform = 'translateX(-50%)';
-            toast.style.backgroundColor = isError ? '#ef4444' : '#ec4899'; // red or pink
-            toast.style.color = '#fff';
-            toast.style.padding = '12px 24px';
-            toast.style.borderRadius = '10px';
-            toast.style.zIndex = '9999';
-            toast.style.fontWeight = 'bold';
-            toast.style.boxShadow = '0 4px 15px rgba(0,0,0,0.2)';
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
-        }
-
         // --- 3. STREAMLIT & JS COMMUNICATION ---
         function sendMessageToStreamlitClient(type, data) {
             var outData = Object.assign({ isStreamlitMessage: true, type: type }, data);
@@ -321,19 +404,18 @@ HTML_CODE = r"""
             setComponentValue: function(value) { sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value}); }
         };
 
-        window.last_run_id = null; // သေချာစေရန် ID မှတ်ထားမည့် နေရာ
+        window.last_run_id = null; 
 
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
                 Streamlit.setFrameHeight();
                 const args = event.data.args;
                 
-                // --- Spinner မလည်စေရန် ID အသစ်စစ်ဆေးသည့်အပိုင်း ---
                 if (args.run_id && args.run_id !== window.last_run_id) {
-                    window.last_run_id = args.run_id; // အသစ်ရောက်လာရင် မှတ်ထားမည်
+                    window.last_run_id = args.run_id;
 
                     if (args.error) {
-                        showToast("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error, true);
+                        alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
                         resetButton();
                     } else if (args.audio_b64) {
                         playAudioBase64(args.audio_b64);
@@ -389,39 +471,12 @@ HTML_CODE = r"""
 
         let selectedVoiceId = voices[0].id;
 
-        function saveState() {
-            const state = {
-                text: document.getElementById('text-input').value,
-                voiceId: selectedVoiceId,
-                speed: document.getElementById('speed').value,
-                pitch: document.getElementById('pitch').value
-            };
-            localStorage.setItem('tts_state', JSON.stringify(state));
-        }
-
-        function loadState() {
-            const savedState = localStorage.getItem('tts_state');
-            if (savedState) {
-                try {
-                    const state = JSON.parse(savedState);
-                    document.getElementById('text-input').value = state.text || '';
-                    selectedVoiceId = state.voiceId || voices[0].id;
-                    
-                    document.getElementById('speed').value = state.speed || 0;
-                    document.getElementById('pitch').value = state.pitch || 0;
-                    
-                    updateCharCount();
-                } catch(e) {
-                    console.error("Could not load state", e);
-                }
-            }
-        }
-
         function init() {
             updateThemeBtnText();
 
-            // Load saved data before rendering buttons
-            loadState();
+            // LocalStorage ကိုဖယ်ရှားလိုက်သဖြင့် Browser refresh လုပ်ပါက အသစ်စက်စက် ပြန်ဖြစ်သွားပါမည်။
+            document.getElementById('text-input').value = '';
+            updateCharCount();
 
             const vGrid = document.getElementById('voices-grid');
             voices.forEach(v => {
@@ -476,7 +531,6 @@ HTML_CODE = r"""
             selectedVoiceId = id;
             document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active-btn'));
             btnElement.classList.add('active-btn');
-            saveState();
         }
 
         function applyPreset(btnElement, speed, pitch) {
@@ -487,7 +541,6 @@ HTML_CODE = r"""
             document.getElementById('pitch').value = pitch;
             updateSlider('speed', speed);
             updateSlider('pitch', pitch);
-            saveState();
         }
 
         function changeVal(id, amount) {
@@ -498,7 +551,6 @@ HTML_CODE = r"""
             el.value = newVal;
             updateSlider(id, newVal);
             document.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active-btn'));
-            saveState();
         }
 
         function updateSlider(id, val) {
@@ -508,36 +560,36 @@ HTML_CODE = r"""
             document.getElementById(id + '-fill').style.width = percentage + '%';
             
             let displayVal = val > 0 ? "+" + val : val;
-            document.getElementById(id + '-val').innerText = toMyanmarNum(displayVal);
+            // ပုံမှန်ဂဏန်း (1,2,3) ကိုသာ ပြသမည်
+            document.getElementById(id + '-val').innerText = displayVal;
         }
 
-        function toMyanmarNum(numStr) {
-            const mmNums = ['၀','၁','၂','၃','၄','၅','၆','၇','၈','၉'];
-            return numStr.toString().replace(/[0-9]/g, function(w) { return mmNums[w]; });
-        }
-
+        // NEW: အတိအကျ စာလုံးရေရေတွက်သည့် စနစ် (Word/Char/Line Counter)
         function updateCharCount() {
-            let len = document.getElementById('text-input').value.length;
-            document.getElementById('char-count').innerText = toMyanmarNum(len);
+            let text = document.getElementById('text-input').value;
+            
+            let charCount = text.length;
+            let wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+            let lineCount = text === '' ? 0 : text.split(/\r\n|\r|\n/).length;
+
+            // Update DOM elements with comma formatting (e.g., 5,938)
+            document.getElementById('char-count').innerText = charCount.toLocaleString('en-US');
+            document.getElementById('word-count').innerText = wordCount.toLocaleString('en-US');
+            document.getElementById('line-count').innerText = lineCount.toLocaleString('en-US');
         }
 
         async function pasteText() {
             try {
                 const text = await navigator.clipboard.readText();
                 const inputArea = document.getElementById('text-input');
-                inputArea.value = (inputArea.value + text).substring(0, 10000); 
+                inputArea.value = inputArea.value + text; 
                 updateCharCount();
-                saveState();
-            } catch (err) { 
-                showToast("စာသား ကူးထည့်၍ မရပါ။ စာရိုက်မည့်အကွက်ကို ဖိ၍ Paste လုပ်ပါ။", true); 
-            }
+            } catch (err) { alert("စာသား ကူးထည့်၍ မရပါ။ စာရိုက်မည့်အကွက်ကို ဖိ၍ Paste လုပ်ပါ။"); }
         }
 
         function clearText() {
             document.getElementById('text-input').value = '';
             updateCharCount();
-            saveState();
-            // hide audio player if cleared
             document.getElementById('audio-container').classList.add('hidden');
         }
 
@@ -562,9 +614,8 @@ HTML_CODE = r"""
             setDownloadName();
             resetButton();
             
-            // --- အပေါ် Auto ပြန်တက်သွားခြင်းမရှိစေရန် Scroll လုပ်မည့်အပိုင်းကို ဖြုတ်လိုက်ပါပြီ ---
             setTimeout(() => {
-                Streamlit.setFrameHeight(); // Height ညှိရုံသာ ညှိပါမည်။
+                Streamlit.setFrameHeight(); 
             }, 100); 
         }
 
@@ -581,13 +632,8 @@ HTML_CODE = r"""
             const pitch = document.getElementById('pitch').value;
             const btn = document.getElementById('generate-btn');
 
-            if(!originalText.trim()) { 
-                showToast("ကျေးဇူးပြု၍ စာသားထည့်သွင်းပါ။", true); 
-                return; 
-            }
+            if(!originalText.trim()) { alert("ကျေးဇူးပြု၍ စာသားထည့်သွင်းပါ။"); return; }
             
-            saveState(); // Ensure state is saved before triggering reload
-
             btn.innerHTML = "ခဏစောင့်ပါ... (Generating...)";
             btn.classList.add('opacity-75', 'cursor-wait');
             
@@ -612,7 +658,7 @@ HTML_CODE = r"""
                 voice: selectedVoiceId,
                 speed: speed,
                 pitch: pitch,
-                timestamp: Date.now() // ဒီ timestamp လေးက Button နှိပ်တိုင်းပြောင်းသွားမည်
+                timestamp: Date.now() 
             });
         }
 
@@ -634,7 +680,6 @@ component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component")
 os.makedirs(component_dir, exist_ok=True)
 html_path = os.path.join(component_dir, "index.html")
 
-# လိုအပ်မှသာ HTML ဖိုင်ကို အသစ်ပြန်ရေးရန်
 write_html = True
 if os.path.exists(html_path):
     with open(html_path, "r", encoding="utf-8") as f:
@@ -645,7 +690,6 @@ if write_html:
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(HTML_CODE)
 
-# HTML UI ကို Streamlit ထဲသို့ ထည့်သွင်းခြင်း
 tts_ui = components.declare_component("tts_ui", path=component_dir)
 
 # --- 4. Python Backend အလုပ်လုပ်မည့် အပိုင်း ---
@@ -659,27 +703,23 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# --- System Boot Time မလိုတော့ဘဲ Native အမြန်ဆုံး အလုပ်လုပ်မည့် Python Function ---
-def generate_tts_fast(text, voice_id, speed, pitch):
+def generate_tts_cli(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
     real_voice = VOICE_MAP.get(voice_id, "my-MM-ThihaNeural")
 
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
     
-    # Internal Async Function
-    async def _gen():
-        communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-        await communicate.save(output_file)
-        
-    try:
-        # Streamlit တွင် Asyncio ကို အမြန်ဆုံး အလုပ်လုပ်စေရန်
-        asyncio.run(_gen())
-    except RuntimeError:
-        # အကယ်၍ Event loop တစ်ခု အလုပ်လုပ်နေပြီးသားဖြစ်နေပါက (Fallback)
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(_gen())
-        
+    cmd = [
+        sys.executable, "-m", "edge_tts",
+        "--voice", real_voice,
+        "--text", text,
+        "--rate", rate,
+        "--pitch", pitch_str,
+        "--write-media", output_file
+    ]
+    
+    subprocess.run(cmd, check=True, capture_output=True)
     return output_file
 
 if "audio_b64" not in st.session_state:
@@ -689,11 +729,10 @@ if "error" not in st.session_state:
 if "last_timestamp" not in st.session_state:
     st.session_state.last_timestamp = None
 
-# --- UI ကို အပေါ်ပြန်မတက်စေရန် key="tts_ui_main" ဖြင့် သော့ခတ်ထားပါသည် ---
 ui_state = tts_ui(
     audio_b64=st.session_state.audio_b64, 
     error=st.session_state.error,
-    run_id=st.session_state.last_timestamp, # JS ဘက်ကို ID လှမ်းပို့ပေးမည် (အဝိုင်းလည်တာရပ်စေရန်)
+    run_id=st.session_state.last_timestamp, 
     key="tts_ui_main"
 )
 
@@ -707,8 +746,7 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        # Native Python စနစ်ဖြင့် အသံအမြန်ထုတ်ပေးမည်
-        output_file = generate_tts_fast(text, voice, speed, pitch)
+        output_file = generate_tts_cli(text, voice, speed, pitch)
         
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -716,6 +754,12 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         os.remove(output_file) 
         st.session_state.audio_b64 = b64
         
+        # --- အသံအောင်မြင်စွာ ထုတ်ပြီးပါက မှတ်တမ်းတင်မည် ---
+        update_stats()
+        
+    except subprocess.CalledProcessError as e:
+        st.session_state.error = f"TTS Error: {e.stderr.decode('utf-8', errors='ignore')}"
+        st.session_state.audio_b64 = None
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
