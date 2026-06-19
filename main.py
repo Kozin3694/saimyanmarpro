@@ -417,7 +417,7 @@ HTML_CODE = r"""
                 <div class="mb-6 relative z-20">
                     <label class="block text-xs text-slate-600 dark:text-slate-400 mb-2 font-extrabold">သိမ်းဆည်းမည့် ဖိုင်အမည် (အသံရော စာတန်းထိုးအတွက်ပါ)</label>
                     <div class="no-bounce-input flex bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-600 rounded-xl overflow-hidden shadow-sm">
-                        <input type="text" id="custom-filename" value="My_Voice_Record" class="w-full bg-transparent text-slate-800 dark:text-white px-4 py-3 text-sm font-bold focus:outline-none" placeholder="ဖိုင်အမည်ရေးပါ">
+                        <input type="text" id="custom-filename" value="My_Voice_Record" class="w-full bg-transparent text-slate-800 dark:text-white px-4 py-3 text-sm font-bold focus:outline-none" placeholder="ဖိုင်အမည်ရေးပါ" onkeyup="setDownloadName()">
                         <span class="bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 px-4 py-3 text-sm font-bold border-l-2 border-slate-300 dark:border-slate-600 flex items-center">.mp3 / .srt</span>
                     </div>
                 </div>
@@ -450,7 +450,7 @@ HTML_CODE = r"""
         };
 
         window.last_run_id = null; 
-        window.srtData = null; // Store base64 SRT data
+        window.srtData = null; // Store base64 SRT data globally
 
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
@@ -464,13 +464,15 @@ HTML_CODE = r"""
                         alert("အသိပေးချက်: " + args.error);
                         resetButton();
                     } else if (args.audio_b64) {
+                        // အသံဖိုင်ကို အရင်ဖွင့်ပေးမည်
                         playAudioBase64(args.audio_b64);
                         
-                        // SRT ဒေတာ လက်ခံရရှိပါက ခလုတ်ကို ဖော်ပြမည်
+                        // ထို့နောက် SRT ဒေတာ ရှိ/မရှိ စစ်ဆေးပြီး ခလုတ်ကို ဖော်ပြမည်
                         if (args.srt_b64) {
                             window.srtData = args.srt_b64;
                             document.getElementById('download-srt-link').classList.remove('hidden');
                         } else {
+                            window.srtData = null;
                             document.getElementById('download-srt-link').classList.add('hidden');
                         }
                     }
@@ -642,39 +644,52 @@ HTML_CODE = r"""
             updateCharCount();
             document.getElementById('audio-container').classList.add('hidden');
             document.getElementById('download-srt-link').classList.add('hidden');
+            window.srtData = null;
         }
 
         function setDownloadName() {
             let customName = document.getElementById('custom-filename').value.trim();
             if(!customName) customName = "SaiMyanmar_TTS";
-            document.getElementById('download-link').download = customName + ".mp3";
+            
+            // Audio ဖိုင်အမည်ပြောင်းခြင်း
+            let audioLink = document.getElementById('download-link');
+            if(audioLink.href && audioLink.href !== "#") {
+                 audioLink.download = customName + ".mp3";
+            }
         }
 
         // --- NEW FUNC: SRT Download လုပ်ရန် ---
         function downloadSRT(e) {
             e.preventDefault();
-            if (!window.srtData) return;
-
-            // Base64 မှ UTF-8 စာသားသို့ ပြောင်းလဲခြင်း
-            const byteString = atob(window.srtData);
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++) {
-                ia[i] = byteString.charCodeAt(i);
+            if (!window.srtData) {
+                alert("စာတန်းထိုး (SRT) ဖိုင် အဆင်သင့်မဖြစ်သေးပါ။");
+                return;
             }
-            const blob = new Blob([ab], { type: 'text/plain;charset=utf-8' });
 
-            let customName = document.getElementById('custom-filename').value.trim();
-            if(!customName) customName = "SaiMyanmar_TTS";
+            try {
+                // Base64 မှ UTF-8 စာသားသို့ ပြောင်းလဲခြင်း
+                const byteString = atob(window.srtData);
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) {
+                    ia[i] = byteString.charCodeAt(i);
+                }
+                const blob = new Blob([ab], { type: 'text/plain;charset=utf-8' });
 
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = customName + ".srt"; // အမည်တူ SRT file အဖြစ် ဒေါင်းလုဒ်လုပ်မည်
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+                let customName = document.getElementById('custom-filename').value.trim();
+                if(!customName) customName = "SaiMyanmar_TTS";
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = customName + ".srt"; // အမည်တူ SRT file အဖြစ် ဒေါင်းလုဒ်လုပ်မည်
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert("SRT ဒေါင်းလုဒ်ဆွဲရာတွင် အမှားအယွင်းဖြစ်ပေါ်ခဲ့ပါသည်: " + err.message);
+            }
         }
 
         const audioPlayer = document.getElementById('audio-player');
