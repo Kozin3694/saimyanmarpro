@@ -3,9 +3,19 @@ import streamlit.components.v1 as components
 import os
 import base64
 import uuid
-import subprocess
 import sys
 import json
+import threading
+import edge_tts
+import asyncio
+
+# --- 0. Global Concurrency Limit (ပြိုင်တူအသုံးပြုသူ Max 10 ကန့်သတ်ရန်) ---
+@st.cache_resource
+def get_semaphore():
+    # တစ်ပြိုင်တည်း အသံထုတ်လုပ်မှု အများဆုံး ၁၀ ခုသာ ခွင့်ပြုရန်
+    return threading.Semaphore(10)
+
+global_semaphore = get_semaphore()
 
 # --- 1. Streamlit Page Configuration ---
 st.set_page_config(layout="wide", page_title="စိုင်းမြန်မာ အသံပြောင်းစနစ် Pro", initial_sidebar_state="auto")
@@ -415,7 +425,7 @@ HTML_CODE = r"""
                     window.last_run_id = args.run_id;
 
                     if (args.error) {
-                        alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
+                        alert("အသိပေးချက်: " + args.error);
                         resetButton();
                     } else if (args.audio_b64) {
                         playAudioBase64(args.audio_b64);
@@ -623,6 +633,7 @@ HTML_CODE = r"""
             const btn = document.getElementById('generate-btn');
             btn.innerHTML = "အသံထုတ်ယူမည်";
             btn.classList.remove('opacity-75', 'cursor-wait');
+            btn.style.pointerEvents = 'auto'; // ခလုတ်ကို ပြန်ဖွင့်ပေးခြင်း
             Streamlit.setFrameHeight();
         }
 
@@ -636,6 +647,7 @@ HTML_CODE = r"""
             
             btn.innerHTML = "ခဏစောင့်ပါ... (Generating...)";
             btn.classList.add('opacity-75', 'cursor-wait');
+            btn.style.pointerEvents = 'none'; // ခလုတ်ကို ထပ်နှိပ်၍မရအောင် ပိတ်ထားခြင်း (Max Limit အတွက်ပါ)
             
             let processedText = originalText;
 
@@ -693,9 +705,6 @@ if write_html:
 tts_ui = components.declare_component("tts_ui", path=component_dir)
 
 # --- 4. Python Backend အလုပ်လုပ်မည့် အပိုင်း ---
-import edge_tts
-import asyncio
-
 VOICE_MAP = {
     "v1": "my-MM-ThihaNeural", "v2": "my-MM-NilarNeural", "v3": "it-IT-GiuseppeMultilingualNeural",
     "v4": "en-AU-WilliamMultilingualNeural", "v5": "en-US-AndrewMultilingualNeural",
@@ -706,16 +715,37 @@ VOICE_MAP = {
     "v14": "ko-KR-HyunsuMultilingualNeural"
 }
 
-# --- အမြန်ဆုံး အလုပ်လုပ်မည့် Async စနစ်သို့ ပြောင်းလဲထားပါသည် ---
-async def generate_tts_fast(text, voice_id, speed, pitch):
+# --- Streamlit နဲ့ Async ငြိခြင်းကို ကာကွယ်ရန် သီးသန့် Thread ခွဲ၍ Run မည့်စနစ် (အလွန်မြန်ဆန်သည်) ---
+def run_tts_in_thread(text, voice_id, speed, pitch):
     rate = f"{speed}%" if str(speed).startswith(("+", "-")) else f"+{speed}%"
     pitch_str = f"{pitch}Hz" if str(pitch).startswith(("+", "-")) else f"+{pitch}Hz"
     real_voice = VOICE_MAP.get(voice_id, "my-MM-ThihaNeural")
-
     output_file = f"temp_{uuid.uuid4().hex}.mp3"
-    communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-    await communicate.save(output_file)
-    return output_file
+    
+    # ရလဒ် သို့မဟုတ် Error ဖမ်းယူရန်
+    result = []
+    
+    def _async_task():
+        try:
+            # Streamlit ရဲ့ Main Event Loop နဲ့ မရောအောင် Loop အသစ်ဖန်တီးခြင်း
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
+            loop.run_until_complete(communicate.save(output_file))
+            loop.close()
+            result.append(output_file)
+        except Exception as e:
+            result.append(e)
+
+    # Thread အသစ်ဖြင့် ခွဲ၍ အလုပ်လုပ်ခိုင်းခြင်း
+    t = threading.Thread(target=_async_task)
+    t.start()
+    t.join() # အသံထုတ်ပြီးစီးသည်အထိ စောင့်မည်
+
+    if isinstance(result[0], Exception):
+        raise result[0]
+        
+    return result[0]
 
 if "audio_b64" not in st.session_state:
     st.session_state.audio_b64 = None
@@ -740,15 +770,18 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     speed = ui_state.get("speed", 0)
     pitch = ui_state.get("pitch", 0)
     
+    # --- ပြိုင်တူ Max 10 ကန့်သတ်ချက်ကို စစ်ဆေးခြင်း ---
+    acquired = global_semaphore.acquire(blocking=False)
+    
+    if not acquired:
+        # ၁၀ ဦး ပြည့်နေပါက
+        st.session_state.error = "🚨 ဆာဗာအလုပ်များနေပါသည်။ ပြိုင်တူအသုံးပြုသူ ၁၀ ဦးပြည့်သွားပါပြီ။ ခဏစောင့်ပြီး ပြန်လည်ကြိုးစားပါ။"
+        st.session_state.audio_b64 = None
+        st.rerun()
+    
     try:
-        # Async Loop ဖြင့် တိုက်ရိုက် အမြန်ခေါ်ယူခြင်း
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        output_file = loop.run_until_complete(generate_tts_fast(text, voice, speed, pitch))
+        # မြန်ဆန်ပြီး Thread မငြိစေသော စနစ်ဖြင့် အသံထုတ်ခြင်း
+        output_file = run_tts_in_thread(text, voice, speed, pitch)
         
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -762,5 +795,8 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
+    finally:
+        # အလုပ်လုပ်ပြီးသွားပါက နောက်လူ အသုံးပြုနိုင်ရန် နေရာပြန်ဖယ်ပေးခြင်း
+        global_semaphore.release()
         
     st.rerun()
