@@ -422,14 +422,14 @@ HTML_CODE = r"""
                     </div>
                 </div>
 
-                <div class="flex flex-col gap-3">
+                <!-- ခလုတ်များကို သီးသန့်စီ ရှင်းရှင်းလင်းလင်း ခွဲထုတ်ထားပါသည် -->
+                <div id="download-buttons-container" class="flex flex-col gap-4 mt-4" style="display: none;">
                     <a id="download-link" href="#" onclick="setDownloadName()" class="bouncy-btn w-full bg-green-500 hover:bg-green-400 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(34,197,94,0.4)] border border-green-400 relative z-20">
-                        ⬇️ အသံဖိုင် (.mp3) ဒေါင်းမည်
+                        ⬇️ အသံဖိုင် (.mp3) သီးသန့်ဒေါင်းမည်
                     </a>
                     
-                    <!-- NEW SRT DOWNLOAD BUTTON -->
-                    <a id="download-srt-link" href="#" onclick="downloadSRT(event)" class="bouncy-btn ripple-effect w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(37,99,235,0.4)] border border-blue-400 relative z-20 hidden">
-                        📝 မြန်မာစာတန်းထိုး (.srt) ဒေါင်းမည်
+                    <a id="download-srt-link" href="#" onclick="downloadSRT(event)" class="bouncy-btn ripple-effect w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(37,99,235,0.4)] border border-blue-400 relative z-20">
+                        📝 မြန်မာစာတန်းထိုး (.srt) သီးသန့်ဒေါင်းမည်
                     </a>
                 </div>
             </div>
@@ -470,10 +470,10 @@ HTML_CODE = r"""
                         // ထို့နောက် SRT ဒေတာ ရှိ/မရှိ စစ်ဆေးပြီး ခလုတ်ကို ဖော်ပြမည်
                         if (args.srt_b64) {
                             window.srtData = args.srt_b64;
-                            document.getElementById('download-srt-link').classList.remove('hidden');
+                            document.getElementById('download-srt-link').style.display = 'flex';
                         } else {
                             window.srtData = null;
-                            document.getElementById('download-srt-link').classList.add('hidden');
+                            document.getElementById('download-srt-link').style.display = 'none';
                         }
                     }
                 }
@@ -643,7 +643,9 @@ HTML_CODE = r"""
             document.getElementById('text-input').value = '';
             updateCharCount();
             document.getElementById('audio-container').classList.add('hidden');
-            document.getElementById('download-srt-link').classList.add('hidden');
+            
+            // ခလုတ်များကို ဝှက်မည်
+            document.getElementById('download-buttons-container').style.display = 'none';
             window.srtData = null;
         }
 
@@ -703,6 +705,10 @@ HTML_CODE = r"""
             audioPlayer.src = "data:audio/mp3;base64," + b64;
             const container = document.getElementById('audio-container');
             container.classList.remove('hidden');
+            
+            // အသံဖိုင်ရသည်နှင့် ခလုတ်များကို ပြပေးမည်
+            document.getElementById('download-buttons-container').style.display = 'flex';
+            
             document.getElementById('download-link').href = audioPlayer.src;
             setDownloadName();
             resetButton();
@@ -771,7 +777,8 @@ HTML_CODE = r"""
 """
 
 # --- 3. Streamlit Custom Component ဖန်တီးခြင်း ---
-component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component")
+# (အရေးကြီးသည် - Browser တွင် ကုတ်အဟောင်းများငြိနေမှုကို ရှင်းလင်းရန် Directory နာမည်အသစ်ပေးထားပါသည်)
+component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component_v3")
 os.makedirs(component_dir, exist_ok=True)
 html_path = os.path.join(component_dir, "index.html")
 
@@ -810,6 +817,10 @@ class CustomSubMaker:
         self.subs.append((start_time, end_time, text))
 
     def generate_subs(self):
+        # တကယ်လို့ edge-tts က စာတန်းထိုး အချိန်မထုတ်ပေးခဲ့ရင်တောင် (Fallback) စာတန်းထိုးတစ်ခု အလိုအလျောက် ထုတ်ပေးမည်။
+        if not self.subs:
+            return "1\n00:00:00,000 --> 00:00:10,000\n[အသံထွက်နေပါသည်... စာတန်းထိုး အတိအကျမရရှိနိုင်ပါ]\n\n"
+            
         srt_text = ""
         for i, (start, end, text) in enumerate(self.subs, 1):
             srt_text += f"{i}\n"
@@ -865,7 +876,7 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
             with open(output_file, "wb") as f:
                 f.write(audio_data)
             
-            # SRT စာသားထုတ်ယူခြင်း
+            # SRT စာသားထုတ်ယူခြင်း (အလွတ်မဖြစ်စေရန် Fallback ထည့်သွင်းထားပြီးဖြစ်သည်)
             srt_text = sub_maker.generate_subs()
             
             loop.close()
