@@ -8,6 +8,7 @@ import json
 import threading
 import edge_tts
 import asyncio
+from edge_tts import SubMaker
 
 # --- 0. Global Concurrency Limit (ပြိုင်တူအသုံးပြုသူ Max 10 ကန့်သတ်ရန်) ---
 @st.cache_resource
@@ -143,6 +144,34 @@ HTML_CODE = r"""
         .bouncy-btn:hover { transform: translateY(-4px) scale(1.03); box-shadow: 0 12px 25px -5px rgba(236, 72, 153, 0.6); border-color: #ec4899; z-index: 10; }
         .bouncy-btn:active { transform: scale(0.92); }
         .active-btn { transform: scale(1.02); }
+
+        /* --- Ripple Effect CSS (ရေလှိုင်းလို ခုန်မည့် Animation) --- */
+        .ripple-effect {
+            position: relative;
+            overflow: hidden;
+            transform: translate3d(0, 0, 0);
+        }
+        .ripple-effect::after {
+            content: "";
+            display: block;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            background-image: radial-gradient(circle, rgba(255, 255, 255, 0.7) 10%, transparent 10.01%);
+            background-repeat: no-repeat;
+            background-position: 50%;
+            transform: scale(10, 10);
+            opacity: 0;
+            transition: transform .5s, opacity 1s;
+        }
+        .ripple-effect:active::after {
+            transform: scale(0, 0);
+            opacity: .4;
+            transition: 0s;
+        }
 
         .style-btn.active-btn {
             border-color: #ec4899 !important; color: #ec4899 !important; box-shadow: 0 4px 15px rgba(236, 72, 153, 0.5), inset 0 0 10px rgba(236, 72, 153, 0.2) !important; transform: scale(1.05); background-color: transparent !important;
@@ -362,7 +391,7 @@ HTML_CODE = r"""
             </div>
         </div>
 
-        <button id="generate-btn" onclick="generateAudio()" class="bouncy-btn w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl shadow-[0_8px_20px_rgba(236,72,153,0.5)] flex justify-center items-center text-xl tracking-widest border-2 border-pink-400/30">
+        <button id="generate-btn" onclick="generateAudio()" class="bouncy-btn ripple-effect w-full bg-gradient-to-r from-pink-600 to-purple-600 text-white font-extrabold py-4 px-4 rounded-2xl shadow-[0_8px_20px_rgba(236,72,153,0.5)] flex justify-center items-center text-xl tracking-widest border-2 border-pink-400/30">
             အသံထုတ်ယူမည်
         </button>
 
@@ -387,16 +416,23 @@ HTML_CODE = r"""
                 <audio id="audio-player" controls class="w-full mb-6 rounded-xl border border-slate-300 dark:border-slate-700 shadow-sm relative z-20"></audio>
                 
                 <div class="mb-6 relative z-20">
-                    <label class="block text-xs text-slate-600 dark:text-slate-400 mb-2 font-extrabold">သိမ်းဆည်းမည့် ဖိုင်အမည် (စိတ်ကြိုက်ပြင်နိုင်သည်)</label>
+                    <label class="block text-xs text-slate-600 dark:text-slate-400 mb-2 font-extrabold">သိမ်းဆည်းမည့် ဖိုင်အမည် (အသံရော စာတန်းထိုးအတွက်ပါ)</label>
                     <div class="no-bounce-input flex bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-600 rounded-xl overflow-hidden shadow-sm">
                         <input type="text" id="custom-filename" value="My_Voice_Record" class="w-full bg-transparent text-slate-800 dark:text-white px-4 py-3 text-sm font-bold focus:outline-none" placeholder="ဖိုင်အမည်ရေးပါ">
-                        <span class="bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 px-4 py-3 text-sm font-bold border-l-2 border-slate-300 dark:border-slate-600 flex items-center">.mp3</span>
+                        <span class="bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 px-4 py-3 text-sm font-bold border-l-2 border-slate-300 dark:border-slate-600 flex items-center">.mp3 / .srt</span>
                     </div>
                 </div>
 
-                <a id="download-link" href="#" onclick="setDownloadName()" class="bouncy-btn w-full bg-green-500 hover:bg-green-400 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(34,197,94,0.4)] border border-green-400 relative z-20">
-                    ⬇️ အသံဖိုင်ဒေါင်းမည်
-                </a>
+                <div class="flex flex-col gap-3">
+                    <a id="download-link" href="#" onclick="setDownloadName()" class="bouncy-btn w-full bg-green-500 hover:bg-green-400 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(34,197,94,0.4)] border border-green-400 relative z-20">
+                        ⬇️ အသံဖိုင် (.mp3) ဒေါင်းမည်
+                    </a>
+                    
+                    <!-- NEW SRT DOWNLOAD BUTTON -->
+                    <a id="download-srt-link" href="#" onclick="downloadSRT(event)" class="bouncy-btn ripple-effect w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-4 px-4 rounded-xl flex justify-center items-center text-base tracking-wider shadow-[0_5px_15px_rgba(37,99,235,0.4)] border border-blue-400 relative z-20 hidden">
+                        📝 မြန်မာစာတန်းထိုး (.srt) ဒေါင်းမည်
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -415,6 +451,7 @@ HTML_CODE = r"""
         };
 
         window.last_run_id = null; 
+        window.srtData = null; // Store base64 SRT data
 
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
@@ -429,6 +466,14 @@ HTML_CODE = r"""
                         resetButton();
                     } else if (args.audio_b64) {
                         playAudioBase64(args.audio_b64);
+                        
+                        // SRT ဒေတာ လက်ခံရရှိပါက ခလုတ်ကို ဖော်ပြမည်
+                        if (args.srt_b64) {
+                            window.srtData = args.srt_b64;
+                            document.getElementById('download-srt-link').classList.remove('hidden');
+                        } else {
+                            document.getElementById('download-srt-link').classList.add('hidden');
+                        }
                     }
                 }
             }
@@ -484,7 +529,6 @@ HTML_CODE = r"""
         function init() {
             updateThemeBtnText();
 
-            // LocalStorage ကိုဖယ်ရှားလိုက်သဖြင့် Browser refresh လုပ်ပါက အသစ်စက်စက် ပြန်ဖြစ်သွားပါမည်။
             document.getElementById('text-input').value = '';
             updateCharCount();
 
@@ -570,11 +614,9 @@ HTML_CODE = r"""
             document.getElementById(id + '-fill').style.width = percentage + '%';
             
             let displayVal = val > 0 ? "+" + val : val;
-            // ပုံမှန်ဂဏန်း (1,2,3) ကိုသာ ပြသမည်
             document.getElementById(id + '-val').innerText = displayVal;
         }
 
-        // NEW: အတိအကျ စာလုံးရေရေတွက်သည့် စနစ် (Word/Char/Line Counter)
         function updateCharCount() {
             let text = document.getElementById('text-input').value;
             
@@ -582,7 +624,6 @@ HTML_CODE = r"""
             let wordCount = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
             let lineCount = text === '' ? 0 : text.split(/\r\n|\r|\n/).length;
 
-            // Update DOM elements with comma formatting (e.g., 5,938)
             document.getElementById('char-count').innerText = charCount.toLocaleString('en-US');
             document.getElementById('word-count').innerText = wordCount.toLocaleString('en-US');
             document.getElementById('line-count').innerText = lineCount.toLocaleString('en-US');
@@ -601,12 +642,40 @@ HTML_CODE = r"""
             document.getElementById('text-input').value = '';
             updateCharCount();
             document.getElementById('audio-container').classList.add('hidden');
+            document.getElementById('download-srt-link').classList.add('hidden');
         }
 
         function setDownloadName() {
             let customName = document.getElementById('custom-filename').value.trim();
             if(!customName) customName = "SaiMyanmar_TTS";
             document.getElementById('download-link').download = customName + ".mp3";
+        }
+
+        // --- NEW FUNC: SRT Download လုပ်ရန် ---
+        function downloadSRT(e) {
+            e.preventDefault();
+            if (!window.srtData) return;
+
+            // Base64 မှ UTF-8 စာသားသို့ ပြောင်းလဲခြင်း
+            const byteString = atob(window.srtData);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+            const blob = new Blob([ab], { type: 'text/plain;charset=utf-8' });
+
+            let customName = document.getElementById('custom-filename').value.trim();
+            if(!customName) customName = "SaiMyanmar_TTS";
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = customName + ".srt"; // အမည်တူ SRT file အဖြစ် ဒေါင်းလုဒ်လုပ်မည်
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         const audioPlayer = document.getElementById('audio-player');
@@ -730,10 +799,32 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
             # Streamlit ရဲ့ Main Event Loop နဲ့ မရောအောင် Loop အသစ်ဖန်တီးခြင်း
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            
             communicate = edge_tts.Communicate(text, real_voice, rate=rate, pitch=pitch_str)
-            loop.run_until_complete(communicate.save(output_file))
+            sub_maker = SubMaker() # SRT တွက်ချက်ပေးမည့် Class
+            
+            # Streaming စနစ်ဖြင့် အသံရော စာတန်းထိုးပါ အချိန်ကိုက် ဖမ်းယူခြင်း
+            async def process_stream():
+                audio_data = b""
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        audio_data += chunk["data"]
+                    elif chunk["type"] == "WordBoundary":
+                        # အသံထွက်သည့် အချိန်နှင့် စာလုံးများကို SRT အတွက် မှတ်သားခြင်း
+                        sub_maker.create_sub((chunk["offset"], chunk["duration"]), chunk["text"])
+                return audio_data
+
+            audio_data = loop.run_until_complete(process_stream())
+            
+            # Audio ဖိုင် သိမ်းခြင်း
+            with open(output_file, "wb") as f:
+                f.write(audio_data)
+            
+            # SRT စာသားထုတ်ယူခြင်း
+            srt_text = sub_maker.generate_subs()
+            
             loop.close()
-            result.append(output_file)
+            result.append((output_file, srt_text)) # Audio File နှင့် SRT စာသား နှစ်ခုလုံးကို Return ပြန်မည်
         except Exception as e:
             result.append(e)
 
@@ -749,6 +840,8 @@ def run_tts_in_thread(text, voice_id, speed, pitch):
 
 if "audio_b64" not in st.session_state:
     st.session_state.audio_b64 = None
+if "srt_b64" not in st.session_state: # အသစ်ထပ်ထည့်ထားသော SRT State
+    st.session_state.srt_b64 = None
 if "error" not in st.session_state:
     st.session_state.error = None
 if "last_timestamp" not in st.session_state:
@@ -756,6 +849,7 @@ if "last_timestamp" not in st.session_state:
 
 ui_state = tts_ui(
     audio_b64=st.session_state.audio_b64, 
+    srt_b64=st.session_state.srt_b64, # UI သို့ SRT ပို့ပေးခြင်း
     error=st.session_state.error,
     run_id=st.session_state.last_timestamp, 
     key="tts_ui_main"
@@ -764,6 +858,7 @@ ui_state = tts_ui(
 if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     st.session_state.last_timestamp = ui_state["timestamp"]
     st.session_state.error = None 
+    st.session_state.srt_b64 = None
     
     text = ui_state.get("text", "")
     voice = ui_state.get("voice", "v1")
@@ -777,17 +872,24 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         # ၁၀ ဦး ပြည့်နေပါက
         st.session_state.error = "🚨 ဆာဗာအလုပ်များနေပါသည်။ ပြိုင်တူအသုံးပြုသူ ၁၀ ဦးပြည့်သွားပါပြီ။ ခဏစောင့်ပြီး ပြန်လည်ကြိုးစားပါ။"
         st.session_state.audio_b64 = None
+        st.session_state.srt_b64 = None
         st.rerun()
     
     try:
-        # မြန်ဆန်ပြီး Thread မငြိစေသော စနစ်ဖြင့် အသံထုတ်ခြင်း
-        output_file = run_tts_in_thread(text, voice, speed, pitch)
+        # မြန်ဆန်ပြီး Thread မငြိစေသော စနစ်ဖြင့် အသံနှင့် SRT ကို ထုတ်ခြင်း
+        output_file, srt_text = run_tts_in_thread(text, voice, speed, pitch)
         
+        # Audio ဖိုင်ကို Base64 ပြောင်းခြင်း
         with open(output_file, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("utf-8")
+            audio_b64 = base64.b64encode(f.read()).decode("utf-8")
+        
+        # SRT စာသားကို Base64 ပြောင်းခြင်း (မြန်မာစာ Unicode မပျက်စေရန် utf-8 ဖြင့် encode လုပ်ပါသည်)
+        srt_b64 = base64.b64encode(srt_text.encode("utf-8")).decode("utf-8")
         
         os.remove(output_file) 
-        st.session_state.audio_b64 = b64
+        
+        st.session_state.audio_b64 = audio_b64
+        st.session_state.srt_b64 = srt_b64
         
         # --- အသံအောင်မြင်စွာ ထုတ်ပြီးပါက မှတ်တမ်းတင်မည် ---
         update_stats()
@@ -795,6 +897,7 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     except Exception as e:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
+        st.session_state.srt_b64 = None
     finally:
         # အလုပ်လုပ်ပြီးသွားပါက နောက်လူ အသုံးပြုနိုင်ရန် နေရာပြန်ဖယ်ပေးခြင်း
         global_semaphore.release()
