@@ -24,7 +24,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. HTML / CSS / JS UI Code ---
-# အစ်ကိုပေးထားသော index.html ကို Streamlit ဖြင့် ချိတ်ဆက်နိုင်ရန် JS အနည်းငယ်ပြင်ဆင်ထားပါသည်
 HTML_CODE = r"""
 <!DOCTYPE html>
 <html lang="my" class="dark">
@@ -308,12 +307,11 @@ HTML_CODE = r"""
                 Streamlit.setFrameHeight();
                 const args = event.data.args;
                 
-                // Python ဘက်မှ အသံဖိုင် Base64 ပြန်လွှတ်ပေးလာပါက
                 if (args.audio_b64 && args.audio_b64 !== window.last_audio_b64) {
                     window.last_audio_b64 = args.audio_b64;
                     playAudioBase64(args.audio_b64);
                 }
-                // Error တက်ပါက
+                
                 if (args.error && args.error !== window.last_error) {
                     window.last_error = args.error;
                     alert("အမှားအယွင်းဖြစ်ပေါ်နေပါသည်: " + args.error);
@@ -496,10 +494,19 @@ HTML_CODE = r"""
 
         function playAudioBase64(b64) {
             audioPlayer.src = "data:audio/mp3;base64," + b64;
-            document.getElementById('audio-container').classList.remove('hidden');
+            const container = document.getElementById('audio-container');
+            container.classList.remove('hidden');
             document.getElementById('download-link').href = audioPlayer.src;
             setDownloadName();
             resetButton();
+            
+            // --- Auto Scroll to Audio Player ပေါင်းထည့်ထားပါသည် ---
+            setTimeout(() => {
+                Streamlit.setFrameHeight(); // iframe အရှည်ကို အရင်ညှိမည်
+                setTimeout(() => {
+                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 100);
+            }, 100);
         }
 
         function resetButton() {
@@ -550,7 +557,6 @@ HTML_CODE = r"""
             Streamlit.setComponentReady();
             setTimeout(() => Streamlit.setFrameHeight(), 100);
 
-            // Responsive iframe height
             const resizeObserver = new ResizeObserver(() => Streamlit.setFrameHeight());
             resizeObserver.observe(document.body);
         };
@@ -560,17 +566,25 @@ HTML_CODE = r"""
 """
 
 # --- 3. Streamlit Custom Component ဖန်တီးခြင်း ---
-# Streamlit ကဖတ်နိုင်အောင် Temporary ဖိုင်တစ်ခုထုတ်ပေးခြင်း
 component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component")
 os.makedirs(component_dir, exist_ok=True)
-with open(os.path.join(component_dir, "index.html"), "w", encoding="utf-8") as f:
-    f.write(HTML_CODE)
+html_path = os.path.join(component_dir, "index.html")
+
+# လိုအပ်မှသာ HTML ဖိုင်ကို အသစ်ပြန်ရေးရန် (Iframe Refresh မဖြစ်စေရန် File Check လုပ်ခြင်း)
+write_html = True
+if os.path.exists(html_path):
+    with open(html_path, "r", encoding="utf-8") as f:
+        if f.read() == HTML_CODE:
+            write_html = False
+
+if write_html:
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(HTML_CODE)
 
 # HTML UI ကို Streamlit ထဲသို့ ထည့်သွင်းခြင်း
 tts_ui = components.declare_component("tts_ui", path=component_dir)
 
-
-# --- 4. Python Backend အလုပ်လုပ်မည့် အပိုင်း (FastAPI အစား) ---
+# --- 4. Python Backend အလုပ်လုပ်မည့် အပိုင်း ---
 VOICE_MAP = {
     "v1": "my-MM-ThihaNeural", "v2": "my-MM-NilarNeural", "v3": "it-IT-GiuseppeMultilingualNeural",
     "v4": "en-AU-WilliamMultilingualNeural", "v5": "en-US-AndrewMultilingualNeural",
@@ -591,7 +605,6 @@ async def generate_tts(text, voice_id, speed, pitch):
     await communicate.save(output_file)
     return output_file
 
-# State မှတ်သားထားရန်
 if "audio_b64" not in st.session_state:
     st.session_state.audio_b64 = None
 if "error" not in st.session_state:
@@ -599,13 +612,11 @@ if "error" not in st.session_state:
 if "last_timestamp" not in st.session_state:
     st.session_state.last_timestamp = None
 
-# UI ကိုခေါ်ယူခြင်း (အသံဖိုင်ရလာပါက UI ဘက်သို့ လှမ်းပို့ပေးမည်)
 ui_state = tts_ui(audio_b64=st.session_state.audio_b64, error=st.session_state.error)
 
-# UI ကနေ အသံထုတ်ဖို့ ခလုတ်နှိပ်ပြီး ဒေတာရောက်လာပါက အလုပ်လုပ်မည့်အပိုင်း
 if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     st.session_state.last_timestamp = ui_state["timestamp"]
-    st.session_state.error = None # Error အဟောင်းဖျက်မည်
+    st.session_state.error = None 
     
     text = ui_state.get("text", "")
     voice = ui_state.get("voice", "v1")
@@ -613,7 +624,6 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
     pitch = ui_state.get("pitch", 0)
     
     try:
-        # Async အလုပ်လုပ်စေရန်
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -622,11 +632,10 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
             
         output_file = loop.run_until_complete(generate_tts(text, voice, speed, pitch))
         
-        # mp3 ကို Base64 အဖြစ်ပြောင်းပြီး UI ကို ပြန်ပို့ရန် ပြင်ဆင်ခြင်း
         with open(output_file, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
         
-        os.remove(output_file) # ထုတ်ထားတဲ့ဖိုင်ကို ချက်ချင်းပြန်ဖျက်မယ်
+        os.remove(output_file) 
         
         st.session_state.audio_b64 = b64
         
@@ -634,4 +643,4 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
         
-    st.rerun() # UI ဘက်ကို အသံဖိုင် ပြန်ရောက်သွားအောင် Page ကို Refresh လုပ်ပေးခြင်း
+    st.rerun()
