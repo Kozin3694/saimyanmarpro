@@ -244,7 +244,7 @@ HTML_CODE = r"""
             </div>
         </div>
         
-        <textarea id="text-input" rows="5" maxlength="10000" oninput="updateCharCount()" class="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white border-2 border-slate-300 dark:border-slate-600 rounded-2xl p-4 focus:outline-none focus:border-pink-500 dark:focus:border-pink-500 focus:ring-2 focus:ring-pink-500/30 text-base leading-relaxed custom-scrollbar shadow-inner transition-all hover:shadow-[0_0_15px_rgba(236,72,153,0.2)]" placeholder="ဤနေရာတွင် မြန်မာစာများ ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..."></textarea>
+        <textarea id="text-input" rows="5" maxlength="10000" oninput="saveState(); updateCharCount()" class="w-full bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white border-2 border-slate-300 dark:border-slate-600 rounded-2xl p-4 focus:outline-none focus:border-pink-500 dark:focus:border-pink-500 focus:ring-2 focus:ring-pink-500/30 text-base leading-relaxed custom-scrollbar shadow-inner transition-all hover:shadow-[0_0_15px_rgba(236,72,153,0.2)]" placeholder="ဤနေရာတွင် မြန်မာစာများ ရိုက်ထည့်ပါ သို့မဟုတ် ကူးထည့်ပါ..."></textarea>
         
         <div class="text-right text-xs font-bold text-slate-500 mt-2 mb-6">
             <span id="char-count">၀</span> / ၁၀၀၀၀
@@ -255,6 +255,7 @@ HTML_CODE = r"""
         </button>
 
         <div id="audio-container" class="mt-8 hidden">
+            <div id="audio-scroll-target"></div>
             <div class="bg-slate-50 dark:bg-slate-900/80 border-2 border-slate-200 dark:border-slate-700 rounded-3xl p-5 sm:p-6 relative overflow-hidden shadow-inner">
                 
                 <p class="text-center text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2 tracking-widest uppercase">အသံဖွင့်စက်</p>
@@ -367,8 +368,39 @@ HTML_CODE = r"""
 
         let selectedVoiceId = voices[0].id;
 
+        function saveState() {
+            const state = {
+                text: document.getElementById('text-input').value,
+                voiceId: selectedVoiceId,
+                speed: document.getElementById('speed').value,
+                pitch: document.getElementById('pitch').value
+            };
+            localStorage.setItem('tts_state', JSON.stringify(state));
+        }
+
+        function loadState() {
+            const savedState = localStorage.getItem('tts_state');
+            if (savedState) {
+                try {
+                    const state = JSON.parse(savedState);
+                    document.getElementById('text-input').value = state.text || '';
+                    selectedVoiceId = state.voiceId || voices[0].id;
+                    
+                    document.getElementById('speed').value = state.speed || 0;
+                    document.getElementById('pitch').value = state.pitch || 0;
+                    
+                    updateCharCount();
+                } catch(e) {
+                    console.error("Could not load state", e);
+                }
+            }
+        }
+
         function init() {
             updateThemeBtnText();
+
+            // Load saved data before rendering buttons
+            loadState();
 
             const vGrid = document.getElementById('voices-grid');
             voices.forEach(v => {
@@ -405,8 +437,8 @@ HTML_CODE = r"""
                 eGrid.appendChild(btn);
             });
 
-            updateSlider('speed', 0);
-            updateSlider('pitch', 0);
+            updateSlider('speed', document.getElementById('speed').value);
+            updateSlider('pitch', document.getElementById('pitch').value);
         }
 
         function toggleTheme() {
@@ -423,6 +455,7 @@ HTML_CODE = r"""
             selectedVoiceId = id;
             document.querySelectorAll('.voice-btn').forEach(b => b.classList.remove('active-btn'));
             btnElement.classList.add('active-btn');
+            saveState();
         }
 
         function applyPreset(btnElement, speed, pitch) {
@@ -433,6 +466,7 @@ HTML_CODE = r"""
             document.getElementById('pitch').value = pitch;
             updateSlider('speed', speed);
             updateSlider('pitch', pitch);
+            saveState();
         }
 
         function changeVal(id, amount) {
@@ -443,6 +477,7 @@ HTML_CODE = r"""
             el.value = newVal;
             updateSlider(id, newVal);
             document.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active-btn'));
+            saveState();
         }
 
         function updateSlider(id, val) {
@@ -471,12 +506,16 @@ HTML_CODE = r"""
                 const inputArea = document.getElementById('text-input');
                 inputArea.value = (inputArea.value + text).substring(0, 10000); 
                 updateCharCount();
+                saveState();
             } catch (err) { alert("စာသား ကူးထည့်၍ မရပါ။ စာရိုက်မည့်အကွက်ကို ဖိ၍ Paste လုပ်ပါ။"); }
         }
 
         function clearText() {
             document.getElementById('text-input').value = '';
             updateCharCount();
+            saveState();
+            // hide audio player if cleared
+            document.getElementById('audio-container').classList.add('hidden');
         }
 
         function setDownloadName() {
@@ -500,13 +539,11 @@ HTML_CODE = r"""
             setDownloadName();
             resetButton();
             
-            // --- Auto Scroll to Audio Player ပေါင်းထည့်ထားပါသည် ---
+            // --- Force Scroll to Audio Player ---
             setTimeout(() => {
-                Streamlit.setFrameHeight(); // iframe အရှည်ကို အရင်ညှိမည်
-                setTimeout(() => {
-                    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 100);
-            }, 100);
+                Streamlit.setFrameHeight();
+                document.getElementById('audio-scroll-target').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 300); // Give it a slight delay to ensure UI is ready
         }
 
         function resetButton() {
@@ -523,6 +560,8 @@ HTML_CODE = r"""
             const btn = document.getElementById('generate-btn');
 
             if(!originalText.trim()) { alert("ကျေးဇူးပြု၍ စာသားထည့်သွင်းပါ။"); return; }
+            
+            saveState(); // Ensure state is saved before triggering reload
 
             btn.innerHTML = "ခဏစောင့်ပါ... (Generating...)";
             btn.classList.add('opacity-75', 'cursor-wait');
@@ -570,7 +609,7 @@ component_dir = os.path.join(os.path.dirname(__file__), "tts_ui_component")
 os.makedirs(component_dir, exist_ok=True)
 html_path = os.path.join(component_dir, "index.html")
 
-# လိုအပ်မှသာ HTML ဖိုင်ကို အသစ်ပြန်ရေးရန် (Iframe Refresh မဖြစ်စေရန် File Check လုပ်ခြင်း)
+# လိုအပ်မှသာ HTML ဖိုင်ကို အသစ်ပြန်ရေးရန်
 write_html = True
 if os.path.exists(html_path):
     with open(html_path, "r", encoding="utf-8") as f:
@@ -612,6 +651,7 @@ if "error" not in st.session_state:
 if "last_timestamp" not in st.session_state:
     st.session_state.last_timestamp = None
 
+# UI ကို Render လုပ်ခြင်း
 ui_state = tts_ui(audio_b64=st.session_state.audio_b64, error=st.session_state.error)
 
 if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
@@ -643,4 +683,6 @@ if ui_state and ui_state.get("timestamp") != st.session_state.last_timestamp:
         st.session_state.error = str(e)
         st.session_state.audio_b64 = None
         
+    # Python အပိုင်းပြီးသွားရင် UI ဘက်ကို အသံဖိုင် Base64 ပို့ဖို့ Rerun ခေါ်လိုက်တာပါ
+    # Browser က Component ကို အသစ်ပြန်ဆွဲပေမယ့် အခု LocalStorage ပါတဲ့အတွက် စာသားတွေ ပြန်ပေါ်လာမှာပါ
     st.rerun()
